@@ -7,16 +7,16 @@ from playwright.sync_api import sync_playwright
 
 # ================= CONFIGURATION =================
 PINCODE = "411046"
-TELEGRAM_BOT_TOKEN = "8819700989:AAEI7Tj0bC7zCiehHP9-IQwm3Ylkfe7R3KQ"
 
-# WHITELIST: Only Telegram Chat IDs inside this list receive alerts and can use commands.
-# To add future subscribers, just add their numeric ID string to this list!
+# Securely read token from GitHub Actions Secrets (or fallback to local test string)
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "YOUR_LOCAL_TEST_TOKEN")
+
 ALLOWED_USERS = [
     "1003899176",  # Your Admin ID
 ]
 
-MAX_ALERTS_PER_RESTOCK = 3       # Send at most 3 notifications per restock, then stop
-REMINDER_INTERVAL_SECONDS = 240  # Wait 4 minutes (240s) between Alert 1, Alert 2, and Alert 3
+MAX_ALERTS_PER_RESTOCK = 3       
+REMINDER_INTERVAL_SECONDS = 240  
 STATE_FILE = "amul_session_v2.json"
 LOG_FILE = "bot.log"
 # =================================================
@@ -60,7 +60,6 @@ def log_print(message: str):
     logging.info(message)
 
 def send_telegram_to_user(chat_id: str, message: str, url: str = None):
-    """Sends a Telegram message to a single user ID."""
     api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": chat_id,
@@ -78,23 +77,15 @@ def send_telegram_to_user(chat_id: str, message: str, url: str = None):
             ]
         }
     try:
-        response = requests.post(api_url, json=payload, timeout=10)
-        if not response.ok:
-            log_print(f"[!] Telegram API error for {chat_id}: {response.text}")
+        requests.post(api_url, json=payload, timeout=10)
     except Exception as e:
-        log_print(f"[!] Failed to send Telegram message to {chat_id}: {e}")
+        log_print(f"[!] Failed to send Telegram message: {e}")
 
 def broadcast_to_subscribers(message: str, url: str = None):
-    """Sends stock alerts ONLY to whitelisted users in ALLOWED_USERS."""
     for user_id in ALLOWED_USERS:
         send_telegram_to_user(user_id, message, url=url)
 
 def handle_telegram_commands(last_update_id: int, latest_status_summary: str) -> int:
-    """
-    Checks if anyone messaged the bot.
-    - Blocks unauthorized strangers and tells them the bot is private.
-    - Replies to whitelisted users when they send /status or /start.
-    """
     api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
     params = {"timeout": 1}
     if last_update_id:
@@ -110,34 +101,22 @@ def handle_telegram_commands(last_update_id: int, latest_status_summary: str) ->
             msg = update.get("message", {})
             chat_id = str(msg.get("chat", {}).get("id", ""))
             text = (msg.get("text") or "").strip().lower()
-            first_name = msg.get("from", {}).get("first_name", "User")
 
             if not chat_id:
                 continue
 
-            # 1. Block strangers who are not in ALLOWED_USERS
             if chat_id not in ALLOWED_USERS:
-                log_print(f"[🔒 Blocked Unauthorized User] Name: {first_name} | ID: {chat_id}")
-                send_telegram_to_user(
-                    chat_id,
-                    "🔒 *Private Bot — Access Restricted*\n\n"
-                    "This Amul Stock Tracker is private and only sends alerts to authorized subscribers.\n\n"
-                    f"🆔 Your Telegram ID is: `{chat_id}`"
-                )
+                send_telegram_to_user(chat_id, f"🔒 *Access Restricted.*\n🆔 Your ID: `{chat_id}`")
                 continue
 
-            # 2. Respond to authorized subscribers
             if text in ["/start", "/status", "status"]:
                 send_telegram_to_user(
                     chat_id,
-                    f"🟢 *Bot is Active & Monitoring Pincode `{PINCODE}`*\n"
-                    f"👥 *Authorized Subscribers:* `{len(ALLOWED_USERS)}`\n"
-                    f"🔔 *Alert Rule:* Max `{MAX_ALERTS_PER_RESTOCK}` alerts per restock (`{REMINDER_INTERVAL_SECONDS // 60} min` apart)\n\n"
+                    f"🟢 *Cloud Bot is Active & Monitoring Pincode `{PINCODE}`*\n\n"
                     f"*Latest Check Summary:*\n{latest_status_summary}"
                 )
     except Exception:
         pass
-
     return last_update_id
 
 def ensure_pincode_set(page, context, current_url: str):
@@ -152,7 +131,6 @@ def ensure_pincode_set(page, context, current_url: str):
                 page.wait_for_timeout(1000)
 
         if pincode_input.is_visible(timeout=2500):
-            log_print(f"[*] Setting delivery pincode {PINCODE} on Amul...")
             pincode_input.click()
             pincode_input.fill("")
             pincode_input.press_sequentially(PINCODE, delay=150)
@@ -173,7 +151,6 @@ def ensure_pincode_set(page, context, current_url: str):
             page.wait_for_timeout(3500)
             page.wait_for_load_state("networkidle", timeout=15000)
             context.storage_state(path=STATE_FILE)
-            log_print(f"[+] Pincode {PINCODE} locked! Reloading product data...")
             page.goto(current_url, wait_until="networkidle", timeout=60000)
             page.wait_for_timeout(2000)
     except Exception as e:
@@ -275,20 +252,13 @@ def check_all_products(alert_tracker: dict) -> str:
 
                 if in_stock:
                     now = time.time()
-                    # Check if we still have alerts left (under 3) AND 4 minutes have passed since last alert
                     if state["count"] < MAX_ALERTS_PER_RESTOCK:
                         if now - state["last_sent"] >= REMINDER_INTERVAL_SECONDS:
                             state["count"] += 1
                             state["last_sent"] = now
                             alert_num = state["count"]
+                            badge = f"Alert {alert_num}/{MAX_ALERTS_PER_RESTOCK}"
 
-                            badge = (
-                                f"Alert {alert_num}/{MAX_ALERTS_PER_RESTOCK}"
-                                if alert_num < MAX_ALERTS_PER_RESTOCK
-                                else f"Final Reminder {alert_num}/{MAX_ALERTS_PER_RESTOCK}"
-                            )
-
-                            log_print(f"[🎉 IN STOCK | {badge} | Qty: {qty_display}] {name}")
                             alert_msg = (
                                 f"🚨 *AMUL WHEY PROTEIN IN STOCK!* `[{badge}]`\n\n"
                                 f"📦 *Product:* {name}\n"
@@ -297,51 +267,39 @@ def check_all_products(alert_tracker: dict) -> str:
                                 f"💰 *Price:* {price}"
                             )
                             broadcast_to_subscribers(alert_msg, url=url)
-                        else:
-                            wait_left = int(REMINDER_INTERVAL_SECONDS - (now - state["last_sent"]))
-                            log_print(f"[IN STOCK | Sent {state['count']}/{MAX_ALERTS_PER_RESTOCK} | Next reminder in {wait_left}s] {name}")
-                    else:
-                        log_print(f"[IN STOCK | Max {MAX_ALERTS_PER_RESTOCK}/{MAX_ALERTS_PER_RESTOCK} alerts already sent — Muted] {name}")
-
-                    status_lines.append(f"✅ *{name}:* `{qty_display}` (Alerts sent: {state['count']}/{MAX_ALERTS_PER_RESTOCK})")
-
+                    status_lines.append(f"✅ *{name}:* `{qty_display}`")
                 else:
-                    # Product is Sold Out -> Reset counter back to 0 so it's ready for the next restock!
-                    if state["count"] > 0:
-                        log_print(f"[🔄 Restock Ended] {name} went out of stock. Resetting alert counter to 0/{MAX_ALERTS_PER_RESTOCK}.")
                     state["count"] = 0
                     state["last_sent"] = 0
-                    log_print(f"[Sold Out | Qty: 0] {name}")
                     status_lines.append(f"❌ *{name}:* Sold Out")
-
             except Exception as e:
-                log_print(f"[!] Error checking {name}: {e}")
                 status_lines.append(f"⚠️ *{name}:* Check error")
 
         browser.close()
-
     return "\n".join(status_lines)
 
 def main():
-    log_print(f"=== Starting Amul Stock Monitor (3-Alert Cap + Private Whitelist) ===")
-    broadcast_to_subscribers(
-        f"✅ *Amul Stock Bot Updated!*\n"
-        f"📍 *Pincode:* `{PINCODE}`\n"
-        f"🔔 *Smart Alerts:* Sends *1 immediate alert + 2 reminders* (4 mins apart), then stops spamming until the next restock.\n"
-        f"🔒 *Privacy:* Locked to `{len(ALLOWED_USERS)}` whitelisted user(s). Send `/status` anytime to check live stock."
-    )
+    log_print(f"=== Starting Amul Cloud Stock Monitor ===")
+    
+    # Pass the secret token into GitHub Actions environment securely
+    if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "YOUR_LOCAL_TEST_TOKEN":
+        # Try reading from environment variable explicitly injected by workflow
+        global TELEGRAM_BOT_TOKEN
+        TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+
+    if os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
+        broadcast_to_subscribers(f"☁️ *Amul Cloud Bot is Live on GitHub!* \n📍 Pincode: `{PINCODE}`")
 
     alert_tracker = {}
     last_update_id = 0
-    latest_summary = "First stock check currently running..."
+    latest_summary = "Initializing..."
 
-    while True:
-        log_print(f"\n--- Checking stock at {time.strftime('%I:%M:%S %p')} ---")
+    # Run for 45 minutes, then exit gracefully before GitHub's 55m timeout limit
+    start_time = time.time()
+    while time.time() - start_time < 2700:
         latest_summary = check_all_products(alert_tracker)
-
-        # Wait ~2 minutes while checking every 5 seconds for /status commands on Telegram
+        
         sleep_duration = random.randint(115, 135)
-        log_print(f"Waiting {sleep_duration} seconds until next check (listening for /status commands)...")
         end_wait = time.time() + sleep_duration
         while time.time() < end_wait:
             last_update_id = handle_telegram_commands(last_update_id, latest_summary)
