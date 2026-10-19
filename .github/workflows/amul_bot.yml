@@ -2,9 +2,8 @@ name: Amul 24/7 Cloud Stock Monitor
 
 on:
   schedule:
-    # Starts a fresh cloud session every hour, 24/7
     - cron: '0 * * * *'
-  workflow_dispatch: # Lets you click a button to start it manually
+  workflow_dispatch:
 
 concurrency:
   group: amul-stock-monitor
@@ -13,7 +12,7 @@ concurrency:
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 50
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -29,4 +28,6 @@ jobs:
           python -m playwright install --with-deps chromium
 
       - name: Run Amul Stock Bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: python main.py
