@@ -8,8 +8,8 @@ from playwright.sync_api import sync_playwright
 # ================= CONFIGURATION =================
 PINCODE = "411046"
 
-# Securely read token from GitHub Actions Secrets (or fallback to local test string)
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "YOUR_LOCAL_TEST_TOKEN")
+# Read token directly from GitHub Secrets / Environment Variable
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 
 ALLOWED_USERS = [
     "1003899176",  # Your Admin ID
@@ -60,6 +60,10 @@ def log_print(message: str):
     logging.info(message)
 
 def send_telegram_to_user(chat_id: str, message: str, url: str = None):
+    if not TELEGRAM_BOT_TOKEN:
+        log_print("[!] Error: TELEGRAM_BOT_TOKEN is empty. Check GitHub Secrets.")
+        return
+
     api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": chat_id,
@@ -77,15 +81,20 @@ def send_telegram_to_user(chat_id: str, message: str, url: str = None):
             ]
         }
     try:
-        requests.post(api_url, json=payload, timeout=10)
+        response = requests.post(api_url, json=payload, timeout=10)
+        if not response.ok:
+            log_print(f"[!] Telegram API error for {chat_id}: {response.text}")
     except Exception as e:
-        log_print(f"[!] Failed to send Telegram message: {e}")
+        log_print(f"[!] Failed to send Telegram message to {chat_id}: {e}")
 
 def broadcast_to_subscribers(message: str, url: str = None):
     for user_id in ALLOWED_USERS:
         send_telegram_to_user(user_id, message, url=url)
 
 def handle_telegram_commands(last_update_id: int, latest_status_summary: str) -> int:
+    if not TELEGRAM_BOT_TOKEN:
+        return last_update_id
+
     api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
     params = {"timeout": 1}
     if last_update_id:
@@ -273,30 +282,33 @@ def check_all_products(alert_tracker: dict) -> str:
                     state["last_sent"] = 0
                     status_lines.append(f"❌ *{name}:* Sold Out")
             except Exception as e:
+                log_print(f"[!] Error checking {name}: {e}")
                 status_lines.append(f"⚠️ *{name}:* Check error")
 
         browser.close()
     return "\n".join(status_lines)
 
 def main():
-    log_print(f"=== Starting Amul Cloud Stock Monitor ===")
-    
-    # Pass the secret token into GitHub Actions environment securely
-    if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "YOUR_LOCAL_TEST_TOKEN":
-        # Try reading from environment variable explicitly injected by workflow
-        global TELEGRAM_BOT_TOKEN
-        TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    log_print(f"=== Starting Amul Cloud Stock Monitor for {PINCODE} ===")
+
+    if not TELEGRAM_BOT_TOKEN:
+        log_print("[!] CRITICAL: TELEGRAM_BOT_TOKEN not found in environment. Check GitHub Secrets.")
 
     if os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
-        broadcast_to_subscribers(f"☁️ *Amul Cloud Bot is Live on GitHub!* \n📍 Pincode: `{PINCODE}`")
+        broadcast_to_subscribers(
+            f"☁️ *Amul Cloud Bot is Live on GitHub!*\n"
+            f"📍 *Pincode:* `{PINCODE}`\n"
+            f"🔔 Max `{MAX_ALERTS_PER_RESTOCK}` alerts per restock (`{REMINDER_INTERVAL_SECONDS // 60}m` apart)."
+        )
 
     alert_tracker = {}
     last_update_id = 0
-    latest_summary = "Initializing..."
+    latest_summary = "Initializing first check..."
 
-    # Run for 45 minutes, then exit gracefully before GitHub's 55m timeout limit
+    # Run for 42 minutes per cloud cycle, well within the 50-minute workflow timeout
     start_time = time.time()
-    while time.time() - start_time < 2700:
+    while time.time() - start_time < 2520:
+        log_print(f"\n--- Checking stock at {time.strftime('%I:%M:%S %p')} ---")
         latest_summary = check_all_products(alert_tracker)
         
         sleep_duration = random.randint(115, 135)
