@@ -314,7 +314,7 @@ def main():
 
     # Run for 42 minutes per cloud cycle, well within the 50-minute workflow timeout
     start_time = time.time()
-    while time.time() - start_time < 2520:
+    while time.time() - start_time < 1680:
         log_print(f"\n--- Checking stock at {time.strftime('%I:%M:%S %p')} ---")
         latest_summary = check_all_products(alert_tracker)
         
