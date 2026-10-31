@@ -2,7 +2,7 @@ name: Amul 24/7 Cloud Stock Monitor
 
 on:
   schedule:
-    - cron: '0 * * * *'
+    - cron: '*/30 * * * *'
   workflow_dispatch:
 
 concurrency:
