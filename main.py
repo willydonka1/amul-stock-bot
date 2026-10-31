@@ -52,6 +52,13 @@ PRODUCTS = [
         "alias": "amul-whey-protein-32-g-or-pack-of-30-sachets",
         "price": "₹2,400",
         "url": "https://shop.amul.com/product/amul-whey-protein-32-g-or-pack-of-30-sachets"
+    },
+    {
+        "name": "Amul High Protein Cubes (190 g | Pack of 5)",
+        "alias": "amul-high-protein-cubes-190-g-or-pack-of-5",
+        "price": "400",
+        "url": "https://shop.amul.com/product/amul-high-protein-cubes-190-g-or-pack-of-5"
+                
     }
 ]
 
